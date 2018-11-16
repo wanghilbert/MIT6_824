@@ -1,6 +1,10 @@
 package mapreduce
 
-import "fmt"
+import (
+	"fmt"
+	"sync"
+	"time"
+)
 
 //
 // schedule() starts and waits for all tasks in the given phase (Map
@@ -32,5 +36,80 @@ func schedule(jobName string, mapFiles []string, nReduce int, phase jobPhase, re
 	//
 	// TODO TODO TODO TODO TODO TODO TODO TODO TODO TODO TODO TODO TODO
 	//
+	var wg sync.WaitGroup
+
+	taskChan := make(chan int, ntasks)
+
+	for i := 0; i < ntasks; i++ {
+		taskChan <- i
+	}
+
+ProLoop:
+	for {
+		select {
+		case ch := <-registerChan:
+			{
+				select {
+				case task := <-taskChan:
+					{
+						var fname string
+						switch phase {
+						case mapPhase:
+							fname = mapFiles[task]
+						case reducePhase:
+							fname = ""
+						}
+						req := DoTaskArgs{JobName: jobName, File: fname, Phase: phase, TaskNumber: task, NumOtherPhase: n_other}
+						wg.Add(1)
+						go func() {
+							defer func() {
+								wg.Done()
+								registerChan <- ch // This line could block the code, so it should be after "wg.Done()"
+							}()
+							if !call(ch, "Worker.DoTask", req, nil) {
+								taskChan <- task
+								time.Sleep(100 * time.Millisecond)
+							}
+						}()
+					}
+				default:
+					{
+						wg.Wait()
+						if len(taskChan) == 0 {
+							break ProLoop
+						}
+					}
+				}
+			}
+		}
+	}
+	// wg.Wait()
+
+	/*	for i := 0; i < ntasks; i++ {
+			var fname string
+			switch phase {
+			case mapPhase:
+				fname = mapFiles[i]
+			case reducePhase:
+				fname = ""
+			}
+			req := DoTaskArgs{JobName: jobName, File: fname, Phase: phase, TaskNumber: i, NumOtherPhase: n_other}
+			select {
+			case ch := <-registerChan:
+				{
+					wg.Add(1)
+					go func() {
+						defer func() {
+							wg.Done()
+							registerChan <- ch
+						}()
+						if !call(ch, "Worker.DoTask", req, nil) {
+							i -= 1
+						}
+					}()
+				}
+			}
+		}
+		wg.Wait()*/
 	fmt.Printf("Schedule: %v phase done\n", phase)
 }
